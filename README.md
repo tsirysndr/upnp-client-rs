@@ -3,16 +3,16 @@
   <a href="LICENSE" target="_blank">
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" />
   </a>
-  <a href="https://crates.io/crates/upnp-client-rs" target="_blank">
-    <img src="https://img.shields.io/crates/v/upnp-client-rs.svg" />
+  <a href="https://crates.io/crates/upnp-client" target="_blank">
+    <img src="https://img.shields.io/crates/v/upnp-client.svg" />
   </a>
   
-  <a href="https://crates.io/crates/upnp-client-rs" target="_blank">
-    <img src="https://img.shields.io/crates/dr/upnp-client-rs" />
+  <a href="https://crates.io/crates/upnp-client" target="_blank">
+    <img src="https://img.shields.io/crates/dr/upnp-client" />
   </a>
   
-  <a href="https://docs.rs/upnp-client-rs" target="_blank">
-    <img src="https://docs.rs/upnp-client-rs/badge.svg" />
+  <a href="https://docs.rs/upnp-client" target="_blank">
+    <img src="https://docs.rs/upnp-client/badge.svg" />
   </a>
 </p>
 
