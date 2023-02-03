@@ -86,7 +86,7 @@ impl MediaRendererClient {
         self.device_client
             .call_action("AVTransport", "Seek", params)
             .await?;
-        todo!()
+        Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), Error> {
