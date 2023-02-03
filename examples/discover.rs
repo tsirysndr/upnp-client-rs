@@ -1,10 +1,6 @@
 use colored_json::prelude::*;
 use futures_util::StreamExt;
-
-use crate::discovery::discover_pnp_locations;
-
-mod discovery;
-mod types;
+use upnp_client::discovery::discover_pnp_locations;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
