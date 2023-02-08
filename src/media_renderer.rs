@@ -1,12 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc, time::Duration};
 
 use anyhow::{Error, Ok};
+use async_stream::stream;
+use futures_util::Stream;
 use xml_builder::{XMLBuilder, XMLElement};
 
 use crate::{
     device_client::DeviceClient,
     parser::{parse_duration, parse_position, parse_supported_protocols, parse_volume},
-    types::{LoadOptions, Metadata, ObjectClass},
+    types::{Event, LoadOptions, Metadata, ObjectClass},
+    BROADCAST_EVENT,
 };
 
 pub enum MediaEvents {
@@ -35,19 +38,44 @@ impl MediaRendererClient {
             .clone()
             .unwrap_or(Metadata::default())
             .title;
-        let artist = options.metadata.unwrap_or(Metadata::default()).artist;
+        let artist = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .artist;
+        let album = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .album;
+        let album_art_uri = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .album_art_uri;
+        let genre = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .genre;
 
         let m = Metadata {
             url: url.to_string(),
             title,
             artist,
+            album,
+            album_art_uri,
+            genre,
             protocol_info,
         };
 
         let mut params = HashMap::new();
         params.insert("InstanceID".to_string(), "0".to_string());
         params.insert("CurrentURI".to_string(), url.to_string());
-        params.insert("CurrentURIMetaData".to_string(), build_metadata(m));
+        params.insert(
+            "CurrentURIMetaData".to_string(),
+            build_metadata(m, options.object_class.unwrap_or(ObjectClass::Video)),
+        );
         self.device_client
             .call_action("AVTransport", "SetAVTransportURI", params)
             .await?;
@@ -125,19 +153,44 @@ impl MediaRendererClient {
             .clone()
             .unwrap_or(Metadata::default())
             .title;
-        let artist = options.metadata.unwrap_or(Metadata::default()).artist;
+        let artist = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .artist;
+        let album = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .album;
+        let album_art_uri = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .album_art_uri;
+        let genre = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .genre;
 
         let m = Metadata {
             url: url.to_string(),
             title,
             artist,
             protocol_info,
+            album,
+            album_art_uri,
+            genre,
         };
 
         let mut params = HashMap::new();
         params.insert("InstanceID".to_string(), "0".to_string());
         params.insert("NextURI".to_string(), url.to_string());
-        params.insert("NextURIMetaData".to_string(), build_metadata(m));
+        params.insert(
+            "NextURIMetaData".to_string(),
+            build_metadata(m, options.object_class.unwrap_or(ObjectClass::Video)),
+        );
         self.device_client
             .call_action("AVTransport", "SetNextAVTransportURI", params)
             .await?;
@@ -197,13 +250,27 @@ impl MediaRendererClient {
             .await?;
         Ok(parse_duration(response.as_str())?)
     }
+
+    pub async fn subscribe(&mut self) -> impl Stream<Item = Event> {
+        let (tx, rx) = mpsc::channel();
+        *BROADCAST_EVENT.lock().unwrap() = Some(tx);
+
+        self.device_client.subscribe("AVTransport").await.unwrap();
+        stream! {
+            while let Some(event) = rx.recv().into_iter().next() {
+                yield event;
+            }
+        }
+    }
 }
 
-fn build_metadata(m: Metadata) -> String {
+fn build_metadata(m: Metadata, media_type: ObjectClass) -> String {
     let mut didl = XMLElement::new("DIDL-Lite");
     didl.add_attribute("xmlns", "urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/");
     didl.add_attribute("xmlns:dc", "http://purl.org/dc/elements/1.1/");
     didl.add_attribute("xmlns:upnp", "urn:schemas-upnp-org:metadata-1-0/upnp/");
+    didl.add_attribute("xmlns:dlna", "urn:schemas-dlna-org:metadata-1-0/");
+    didl.add_attribute("xmlns:xbmc", "urn:schemas-xbmc-org:metadata-1-0/");
     didl.add_attribute("xmlns:sec", "http://www.sec.co.kr/");
 
     let mut item = XMLElement::new("item");
@@ -211,23 +278,45 @@ fn build_metadata(m: Metadata) -> String {
     item.add_attribute("parentID", "-1");
     item.add_attribute("restricted", "false");
 
-    let media_type: ObjectClass = ObjectClass::Audio;
+    let mut title = XMLElement::new("dc:title");
+    title.add_text(m.title).unwrap();
+    item.add_child(title).unwrap();
 
     let mut class = XMLElement::new("upnp:class");
     class.add_text(media_type.value().to_owned()).unwrap();
     item.add_child(class).unwrap();
 
-    let mut title = XMLElement::new("dc:title");
-    title.add_text(m.title).unwrap();
-    let mut artist = XMLElement::new("dc:artist");
-    artist.add_text(m.artist).unwrap();
+    if let Some(value) = m.artist {
+        let mut artist = XMLElement::new("upnp:artist");
+        artist.add_text(value).unwrap();
+        item.add_child(artist).unwrap();
+    }
+
+    if let Some(value) = m.album {
+        let mut album = XMLElement::new("upnp:album");
+        album.add_text(value).unwrap();
+        item.add_child(album).unwrap();
+    }
+
+    if let Some(value) = m.album_art_uri {
+        let mut album_art = XMLElement::new("upnp:albumArtURI");
+        album_art.add_attribute("dlna:profileID", "JPEG_TN");
+        album_art.add_attribute("xmlns:dlna", "urn:schemas-dlna-org:metadata-1-0/");
+        album_art.add_text(value).unwrap();
+        item.add_child(album_art).unwrap();
+    }
+
+    if let Some(value) = m.genre {
+        let mut genre = XMLElement::new("upnp:genre");
+        genre.add_text(value).unwrap();
+        item.add_child(genre).unwrap();
+    }
+
     let mut res = XMLElement::new("res");
     res.add_attribute("protocolInfo", m.protocol_info.as_str());
     res.add_text(m.url).unwrap();
     item.add_child(res).unwrap();
 
-    item.add_child(title).unwrap();
-    item.add_child(artist).unwrap();
     didl.add_child(item).unwrap();
 
     let mut xml = XMLBuilder::new().build();
@@ -235,7 +324,10 @@ fn build_metadata(m: Metadata) -> String {
 
     let mut writer: Vec<u8> = Vec::new();
     xml.generate(&mut writer).unwrap();
-    String::from_utf8(writer).unwrap()
+    let metadata = String::from_utf8(writer)
+        .unwrap()
+        .replace(r#"<?xml version="1.0" encoding="UTF-8"?>"#, "");
+    xml::escape::escape_str_attribute(&metadata).to_string()
 }
 
 fn format_time(seconds: u64) -> String {

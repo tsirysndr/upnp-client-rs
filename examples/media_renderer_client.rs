@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let kodi_device = kodi_device.unwrap();
     let device_client = DeviceClient::new(&kodi_device.location).connect().await?;
-    let media_renderer = MediaRendererClient::new(device_client);
+    let mut media_renderer = MediaRendererClient::new(device_client);
 
     let options = LoadOptions {
         dlna_features: Some(
@@ -45,6 +45,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
     media_renderer.load(media_url, options).await?;
+    let events = media_renderer.subscribe().await;
+    tokio::pin!(events);
+
+    while let Some(event) = events.next().await {
+        println!("\n{}\n", event);
+    }
+
+    // media_renderer.stop().await?;
+    // media_renderer.play().await?;
+    // media_renderer.pause().await?;
 
     Ok(())
 }
