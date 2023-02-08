@@ -98,6 +98,52 @@ impl MediaRendererClient {
         Ok(())
     }
 
+    pub async fn next(&self) -> Result<(), Error> {
+        let mut params = HashMap::new();
+        params.insert("InstanceID".to_string(), "0".to_string());
+        self.device_client
+            .call_action("AVTransport", "Next", params)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn previous(&self) -> Result<(), Error> {
+        let mut params = HashMap::new();
+        params.insert("InstanceID".to_string(), "0".to_string());
+        self.device_client
+            .call_action("AVTransport", "Previous", params)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_next(&self, url: &str, options: LoadOptions) -> Result<(), Error> {
+        let dlna_features = options.dlna_features.unwrap_or("*".to_string());
+        let content_type = options.content_type.unwrap_or("video/mpeg".to_string());
+        let protocol_info = format!("http-get:*:{}:{}", content_type, dlna_features);
+        let title = options
+            .metadata
+            .clone()
+            .unwrap_or(Metadata::default())
+            .title;
+        let artist = options.metadata.unwrap_or(Metadata::default()).artist;
+
+        let m = Metadata {
+            url: url.to_string(),
+            title,
+            artist,
+            protocol_info,
+        };
+
+        let mut params = HashMap::new();
+        params.insert("InstanceID".to_string(), "0".to_string());
+        params.insert("NextURI".to_string(), url.to_string());
+        params.insert("NextURIMetaData".to_string(), build_metadata(m));
+        self.device_client
+            .call_action("AVTransport", "SetNextAVTransportURI", params)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_volume(&self) -> Result<u8, Error> {
         let mut params = HashMap::new();
         params.insert("InstanceID".to_string(), "0".to_string());
