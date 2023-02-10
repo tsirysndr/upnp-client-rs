@@ -45,6 +45,19 @@ pub enum ObjectClass {
     Audio,
     Video,
     Image,
+    Container,
+}
+
+impl From<&str> for ObjectClass {
+    fn from(value: &str) -> Self {
+        match value {
+            "object.item.audioItem.musicTrack" => ObjectClass::Audio,
+            "object.item.videoItem.movie" => ObjectClass::Video,
+            "object.item.imageItem.photo" => ObjectClass::Image,
+            "object.container" => ObjectClass::Container,
+            _ => ObjectClass::Container,
+        }
+    }
 }
 
 impl ObjectClass {
@@ -53,6 +66,7 @@ impl ObjectClass {
             ObjectClass::Audio => "object.item.audioItem.musicTrack",
             ObjectClass::Video => "object.item.videoItem.movie",
             ObjectClass::Image => "object.item.imageItem.photo",
+            ObjectClass::Container => "object.container",
         }
     }
 }
@@ -156,4 +170,43 @@ impl Display for Event {
             },
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Container {
+    pub id: String,
+    pub parent_id: String,
+    pub title: String,
+    pub creator: Option<String>,
+    pub restricted: bool,
+    pub searchable: bool,
+    pub child_count: Option<u32>,
+    pub album_art_uri: Option<String>,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+    pub genre: Option<String>,
+    pub date: Option<String>,
+    pub original_track_number: Option<u32>,
+    pub protocol_info: Option<String>,
+    pub url: Option<String>,
+    pub object_class: Option<ObjectClass>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Item {
+    pub id: String,
+    pub parent_id: String,
+    pub title: String,
+    pub creator: Option<String>,
+    pub restricted: bool,
+    pub searchable: bool,
+    pub album_art_uri: Option<String>,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+    pub genre: Option<String>,
+    pub date: Option<String>,
+    pub original_track_number: Option<u32>,
+    pub protocol_info: Option<String>,
+    pub url: Option<String>,
+    pub object_class: Option<ObjectClass>,
 }

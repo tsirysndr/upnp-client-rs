@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::types::{Action, Argument, Device, Metadata, Service};
+use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service};
 use anyhow::Error;
 use elementtree::Element;
 use surf::{http::Method, Client, Config, Url};
@@ -516,4 +516,161 @@ pub fn deserialize_metadata(xml: &str) -> Result<Metadata, Error> {
         url,
         ..Default::default()
     })
+}
+
+pub fn parse_browse_response(xml: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
+    let parser = EventReader::from_str(xml);
+    let mut in_result = false;
+    let mut result: (Vec<Container>, Vec<Item>) = (Vec::new(), Vec::new());
+
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement { name, .. }) => {
+                if name.local_name == "Result" {
+                    in_result = true;
+                }
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                if name.local_name == "Result" {
+                    in_result = false;
+                }
+            }
+            Ok(XmlEvent::Characters(value)) => {
+                if in_result {
+                    result = deserialize_content_directory(&value)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+
+pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
+    let parser = EventReader::from_str(xml);
+    let mut in_container = false;
+    let mut in_item = false;
+    let mut in_title = false;
+    let mut in_artist = false;
+    let mut in_album = false;
+    let mut in_album_art = false;
+    let mut in_genre = false;
+    let mut in_class = false;
+    let mut containers: Vec<Container> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
+
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "container" {
+                    in_container = true;
+                    let mut container = Container::default();
+                    for attr in attributes.clone() {
+                        if attr.name.local_name == "id" {
+                            container.id = attr.value.clone();
+                        }
+                        if attr.name.local_name == "parentID" {
+                            container.parent_id = attr.value.clone();
+                        }
+                    }
+                    containers.push(container);
+                }
+                if name.local_name == "item" {
+                    in_item = true;
+                    let mut item = Item::default();
+                    for attr in attributes {
+                        if attr.name.local_name == "id" {
+                            item.id = attr.value.clone();
+                        }
+                        if attr.name.local_name == "parentID" {
+                            item.parent_id = attr.value.clone();
+                        }
+                    }
+                    items.push(item);
+                }
+                if name.local_name == "title" {
+                    in_title = true;
+                }
+                if name.local_name == "artist" {
+                    in_artist = true;
+                }
+                if name.local_name == "album" {
+                    in_album = true;
+                }
+                if name.local_name == "albumArtURI" {
+                    in_album_art = true;
+                }
+                if name.local_name == "genre" {
+                    in_genre = true;
+                }
+                if name.local_name == "class" {
+                    in_class = true;
+                }
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                if name.local_name == "container" {
+                    in_container = false;
+                }
+                if name.local_name == "item" {
+                    in_item = false;
+                }
+                if name.local_name == "title" {
+                    in_title = false;
+                }
+                if name.local_name == "artist" {
+                    in_artist = false;
+                }
+                if name.local_name == "album" {
+                    in_album = false;
+                }
+                if name.local_name == "albumArtURI" {
+                    in_album_art = false;
+                }
+                if name.local_name == "genre" {
+                    in_genre = false;
+                }
+                if name.local_name == "class" {
+                    in_class = false;
+                }
+            }
+            Ok(XmlEvent::Characters(value)) => {
+                if in_container {
+                    if let Some(container) = containers.last_mut() {
+                        if in_title {
+                            container.title = value.clone();
+                        }
+                        if in_class {
+                            container.object_class = Some(value.as_str().into());
+                        }
+                    }
+                }
+                if in_item {
+                    if let Some(item) = items.last_mut() {
+                        if in_title {
+                            item.title = value.clone();
+                        }
+                        if in_artist {
+                            item.artist = Some(value.clone());
+                        }
+                        if in_album {
+                            item.album = Some(value.clone());
+                        }
+                        if in_album_art {
+                            item.album_art_uri = Some(value.clone());
+                        }
+                        if in_genre {
+                            item.genre = Some(value.clone());
+                        }
+                        if in_class {
+                            item.object_class = Some(value.as_str().into());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok((containers, items))
 }
