@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::types::{Action, Argument, Device, Service};
+use crate::types::{Action, Argument, Device, Metadata, Service};
 use anyhow::Error;
 use elementtree::Element;
 use surf::{http::Method, Client, Config, Url};
@@ -323,4 +323,197 @@ pub fn parse_supported_protocols(xml_root: &str) -> Result<Vec<String>, Error> {
         }
     }
     Ok(protocols.split(",").map(|s| s.to_string()).collect())
+}
+
+pub fn parse_last_change(xml_root: &str) -> Result<Option<String>, Error> {
+    let parser = EventReader::from_str(xml_root);
+    let mut result = None;
+    let mut in_last_change = false;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement { name, .. }) => {
+                if name.local_name == "LastChange" {
+                    in_last_change = true;
+                }
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                if name.local_name == "LastChange" {
+                    in_last_change = false;
+                }
+            }
+            Ok(XmlEvent::Characters(last_change)) => {
+                if in_last_change {
+                    result = Some(last_change);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+
+pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>, Error> {
+    let parser = EventReader::from_str(xml_root);
+    let mut current_play_mode: Option<String> = None;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "CurrentPlayMode" {
+                    for attr in attributes {
+                        if attr.name.local_name == "val" {
+                            current_play_mode = Some(attr.value);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(current_play_mode)
+}
+
+pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>, Error> {
+    let parser = EventReader::from_str(xml_root);
+    let mut transport_state: Option<String> = None;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "TransportState" {
+                    for attr in attributes {
+                        if attr.name.local_name == "val" {
+                            transport_state = Some(attr.value);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(transport_state)
+}
+
+pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>, Error> {
+    let parser = EventReader::from_str(xml_root);
+    let mut av_transport_uri_metadata: Option<String> = None;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "AVTransportURIMetaData" {
+                    for attr in attributes {
+                        if attr.name.local_name == "val" {
+                            av_transport_uri_metadata = Some(attr.value);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(av_transport_uri_metadata)
+}
+
+pub fn parse_current_track_metadata(xml_root: &str) -> Result<Option<String>, Error> {
+    let parser = EventReader::from_str(xml_root);
+    let mut current_track_metadata: Option<String> = None;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "CurrentTrackMetaData" {
+                    for attr in attributes {
+                        if attr.name.local_name == "val" {
+                            current_track_metadata = Some(attr.value);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(current_track_metadata)
+}
+
+pub fn deserialize_metadata(xml: &str) -> Result<Metadata, Error> {
+    let parser = EventReader::from_str(xml);
+    let mut in_title = false;
+    let mut in_artist = false;
+    let mut in_album = false;
+    let mut in_album_art = false;
+    let mut title: Option<String> = None;
+    let mut artist: Option<String> = None;
+    let mut album: Option<String> = None;
+    let mut album_art: Option<String> = None;
+    let mut url: String = String::from("");
+
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                if name.local_name == "item" {
+                    for attr in attributes {
+                        if attr.name.local_name == "id" {
+                            url = attr.value;
+                        }
+                    }
+                }
+                if name.local_name == "title" {
+                    in_title = true;
+                }
+                if name.local_name == "artist" {
+                    in_artist = true;
+                }
+                if name.local_name == "album" {
+                    in_album = true;
+                }
+                if name.local_name == "albumArtURI" {
+                    in_album_art = true;
+                }
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                if name.local_name == "title" {
+                    in_title = false;
+                }
+                if name.local_name == "artist" {
+                    in_artist = false;
+                }
+                if name.local_name == "album" {
+                    in_album = false;
+                }
+                if name.local_name == "albumArtURI" {
+                    in_album_art = false;
+                }
+            }
+            Ok(XmlEvent::Characters(value)) => {
+                if in_title {
+                    title = Some(value.clone());
+                }
+                if in_artist {
+                    artist = Some(value.clone());
+                }
+                if in_album {
+                    album = Some(value.clone());
+                }
+                if in_album_art {
+                    album_art = Some(value.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(Metadata {
+        title: title.unwrap_or_default(),
+        artist,
+        album,
+        album_art_uri: album_art,
+        url,
+        ..Default::default()
+    })
 }

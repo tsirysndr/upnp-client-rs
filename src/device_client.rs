@@ -1,18 +1,37 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    net::TcpListener,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
 
+use crate::{
+    parser::{
+        deserialize_metadata, parse_av_transport_uri_metadata, parse_current_play_mode,
+        parse_current_track_metadata, parse_last_change, parse_location, parse_transport_state,
+    },
+    types::{AVTransportEvent, Device, Event, Service},
+    BROADCAST_EVENT,
+};
 use anyhow::Error;
+use hyper::{
+    server::conn::AddrStream,
+    service::{make_service_fn, service_fn},
+};
+use hyper::{Body, Request, Response, Server};
 use surf::{Client, Config, Url};
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
-use crate::{
-    parser::parse_location,
-    types::{Device, Service},
-};
-
+#[derive(Clone)]
 pub struct DeviceClient {
     base_url: Url,
     http_client: Client,
     device: Option<Device>,
+    stop: Arc<Mutex<bool>>,
 }
 
 impl DeviceClient {
@@ -24,6 +43,7 @@ impl DeviceClient {
                 .try_into()
                 .unwrap(),
             device: None,
+            stop: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -33,6 +53,7 @@ impl DeviceClient {
             base_url: self.base_url.clone(),
             http_client: self.http_client.clone(),
             device: self.device.clone(),
+            stop: self.stop.clone(),
         })
     }
 
@@ -128,6 +149,176 @@ impl DeviceClient {
             return Ok(service.clone());
         }
         Err(Error::msg("Device not connected"))
+    }
+
+    pub async fn subscribe(&mut self, service_id: &str) -> Result<(), Error> {
+        if self.device.is_none() {
+            return Err(Error::msg("Device not connected"));
+        }
+        let service_id = resolve_service(service_id);
+        let service = self.get_service_description(&service_id).await?;
+
+        let user_agent = format!(
+            "upnp-client/{} ({})",
+            env!("CARGO_PKG_VERSION"),
+            env::consts::OS
+        );
+
+        let (address, port) = self.ensure_eventing_server().await?;
+        let callback = format!("<http://{}:{}>", address, port);
+
+        let client = hyper::Client::new();
+        let req = hyper::Request::builder()
+            .method("SUBSCRIBE")
+            .uri(service.event_sub_url.clone())
+            .header("CALLBACK", callback)
+            .header("NT", "upnp:event")
+            .header("TIMEOUT", "Second-1800")
+            .header("USER-AGENT", user_agent)
+            .body(hyper::Body::empty())
+            .unwrap();
+        client.request(req).await?;
+        Ok(())
+    }
+
+    pub async fn unsubscribe(&mut self, service_id: &str, sid: &str) -> Result<(), Error> {
+        if self.device.is_none() {
+            return Err(Error::msg("Device not connected"));
+        }
+        let service_id = resolve_service(service_id);
+        let service = self.get_service_description(&service_id).await.unwrap();
+        let client = hyper::Client::new();
+        let req = hyper::Request::builder()
+            .method("UNSUBSCRIBE")
+            .uri(service.event_sub_url.clone())
+            .header("SID", sid)
+            .body(hyper::Body::empty())
+            .unwrap();
+
+        client.request(req).await?;
+
+        self.release_eventing_server().await?;
+        Ok(())
+    }
+
+    async fn ensure_eventing_server(&mut self) -> Result<(String, u16), Error> {
+        let addr: &str = "0.0.0.0:0";
+        let listener = TcpListener::bind(&addr).unwrap();
+
+        let service = make_service_fn(|_: &AddrStream| async {
+            Ok::<_, hyper::Error>(service_fn(|req: Request<Body>| async move {
+                let sid = req
+                    .headers()
+                    .get("sid")
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+                let body = hyper::body::to_bytes(req.into_body()).await?;
+                let xml = String::from_utf8(body.to_vec()).unwrap();
+
+                let last_change = parse_last_change(xml.as_str()).unwrap();
+                let last_change = last_change.unwrap_or_default();
+
+                let transport_state = parse_transport_state(last_change.as_str()).unwrap();
+                let play_mode = parse_current_play_mode(last_change.as_str()).unwrap();
+                let av_transport_uri_metadata =
+                    parse_av_transport_uri_metadata(last_change.as_str()).unwrap();
+                let current_track_metadata =
+                    parse_current_track_metadata(last_change.as_str()).unwrap();
+
+                match transport_state {
+                    Some(state) => {
+                        let tx = BROADCAST_EVENT.lock().unwrap();
+                        let tx = tx.as_ref().clone();
+                        let ev = AVTransportEvent::TransportState {
+                            sid: sid.clone(),
+                            transport_state: state,
+                        };
+                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
+                    }
+                    None => {}
+                }
+
+                match play_mode {
+                    Some(mode) => {
+                        let tx = BROADCAST_EVENT.lock().unwrap();
+                        let tx = tx.as_ref().clone();
+                        let ev = AVTransportEvent::CurrentPlayMode {
+                            sid: sid.clone(),
+                            play_mode: mode,
+                        };
+                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
+                    }
+                    None => {}
+                }
+
+                match av_transport_uri_metadata {
+                    Some(metadata) => {
+                        let tx = BROADCAST_EVENT.lock().unwrap();
+                        let tx = tx.as_ref().clone();
+                        let m = deserialize_metadata(metadata.as_str()).unwrap();
+                        let ev = AVTransportEvent::AVTransportURIMetaData {
+                            sid: sid.clone(),
+                            url: m.url,
+                            title: m.title,
+                            artist: m.artist,
+                            album: m.album,
+                            album_art_uri: m.album_art_uri,
+                            genre: m.genre,
+                        };
+                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
+                    }
+                    None => {}
+                }
+
+                match current_track_metadata {
+                    Some(metadata) => {
+                        let m = deserialize_metadata(metadata.as_str()).unwrap();
+                        let tx = BROADCAST_EVENT.lock().unwrap();
+                        let tx = tx.as_ref().clone();
+                        let ev = AVTransportEvent::CurrentTrackMetadata {
+                            sid: sid.clone(),
+                            url: m.url,
+                            title: m.title,
+                            artist: m.artist,
+                            album: m.album,
+                            album_art_uri: m.album_art_uri,
+                            genre: m.genre,
+                        };
+                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
+                    }
+                    None => {}
+                }
+
+                Ok::<_, hyper::Error>(Response::new(Body::empty()))
+            }))
+        });
+
+        let server = Server::from_tcp(listener).unwrap().serve(service);
+
+        let address = server.local_addr().ip().to_string();
+        let port = server.local_addr().port();
+
+        let stop = self.stop.clone();
+
+        tokio::spawn(async move {
+            server.await.unwrap();
+        });
+
+        tokio::spawn(async move {
+            while !*stop.lock().unwrap() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+
+        Ok((address, port))
+    }
+
+    async fn release_eventing_server(&mut self) -> Result<(), Error> {
+        let mut stop = self.stop.lock().unwrap();
+        *stop = true;
+        Ok(())
     }
 }
 
