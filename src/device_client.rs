@@ -57,6 +57,10 @@ impl DeviceClient {
         })
     }
 
+    pub fn ip(&self) -> String {
+        self.base_url.host_str().unwrap().to_string()
+    }
+
     pub async fn call_action(
         &self,
         service_id: &str,
