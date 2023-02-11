@@ -149,15 +149,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```
 
+See the [examples](./examples) directory for more examples.
+
 ### Features
 
 - [x] Discover devices
-- [x] Control device (Load, Play, Pause, Stop, Seek, etc.)
+- [x] Control Media Renderer device (Load, Play, Pause, Stop, Seek, etc.)
+- [x] Browse Media Server device
 
 
 ### References
 - [UPnP Device Architecture 1.1](http://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.1.pdf)
 - [UPnP AVTransport v3 Service](http://www.upnp.org/specs/av/UPnP-av-AVTransport-v3-Service-20101231.pdf)
+- [UPnP AV ContentDirectory v3 Service](http://upnp.org/specs/av/UPnP-av-ContentDirectory-v3-Service.pdf)
 
 ### License
 MIT

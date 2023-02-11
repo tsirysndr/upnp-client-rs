@@ -206,7 +206,9 @@ pub struct Item {
     pub genre: Option<String>,
     pub date: Option<String>,
     pub original_track_number: Option<u32>,
-    pub protocol_info: Option<String>,
-    pub url: Option<String>,
+    pub protocol_info: String,
+    pub url: String,
+    pub size: Option<u64>,
+    pub duration: Option<String>,
     pub object_class: Option<ObjectClass>,
 }

@@ -518,7 +518,7 @@ pub fn deserialize_metadata(xml: &str) -> Result<Metadata, Error> {
     })
 }
 
-pub fn parse_browse_response(xml: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
+pub fn parse_browse_response(xml: &str, ip: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
     let parser = EventReader::from_str(xml);
     let mut in_result = false;
     let mut result: (Vec<Container>, Vec<Item>) = (Vec::new(), Vec::new());
@@ -537,7 +537,7 @@ pub fn parse_browse_response(xml: &str) -> Result<(Vec<Container>, Vec<Item>), E
             }
             Ok(XmlEvent::Characters(value)) => {
                 if in_result {
-                    result = deserialize_content_directory(&value)?;
+                    result = deserialize_content_directory(&value, ip)?;
                 }
             }
             _ => {}
@@ -546,7 +546,10 @@ pub fn parse_browse_response(xml: &str) -> Result<(Vec<Container>, Vec<Item>), E
     Ok(result)
 }
 
-pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
+pub fn deserialize_content_directory(
+    xml: &str,
+    ip: &str,
+) -> Result<(Vec<Container>, Vec<Item>), Error> {
     let parser = EventReader::from_str(xml);
     let mut in_container = false;
     let mut in_item = false;
@@ -556,6 +559,7 @@ pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<I
     let mut in_album_art = false;
     let mut in_genre = false;
     let mut in_class = false;
+    let mut in_res = false;
     let mut containers: Vec<Container> = Vec::new();
     let mut items: Vec<Item> = Vec::new();
 
@@ -580,7 +584,7 @@ pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<I
                 if name.local_name == "item" {
                     in_item = true;
                     let mut item = Item::default();
-                    for attr in attributes {
+                    for attr in attributes.clone() {
                         if attr.name.local_name == "id" {
                             item.id = attr.value.clone();
                         }
@@ -608,6 +612,24 @@ pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<I
                 if name.local_name == "class" {
                     in_class = true;
                 }
+                if name.local_name == "res" {
+                    for attr in attributes {
+                        if attr.name.local_name == "protocolInfo"
+                            && (attr.value.clone().contains("audio")
+                                || attr.value.clone().contains("video"))
+                        {
+                            items.last_mut().unwrap().protocol_info = attr.value.clone();
+                        }
+                        if attr.name.local_name == "size" {
+                            items.last_mut().unwrap().size =
+                                Some(attr.value.parse::<u64>().unwrap());
+                        }
+                        if attr.name.local_name == "duration" {
+                            items.last_mut().unwrap().duration = Some(attr.value.clone());
+                        }
+                    }
+                    in_res = true;
+                }
             }
             Ok(XmlEvent::EndElement { name }) => {
                 if name.local_name == "container" {
@@ -633,6 +655,9 @@ pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<I
                 }
                 if name.local_name == "class" {
                     in_class = false;
+                }
+                if name.local_name == "res" {
+                    in_res = false;
                 }
             }
             Ok(XmlEvent::Characters(value)) => {
@@ -664,7 +689,15 @@ pub fn deserialize_content_directory(xml: &str) -> Result<(Vec<Container>, Vec<I
                             item.genre = Some(value.clone());
                         }
                         if in_class {
-                            item.object_class = Some(value.as_str().into());
+                            item.object_class = Some(value.clone().as_str().into());
+                        }
+                        if in_res
+                            && item.url.is_empty()
+                            && value.contains(ip)
+                            && (item.protocol_info.contains("audio")
+                                || item.protocol_info.contains("video"))
+                        {
+                            item.url = value.clone();
                         }
                     }
                 }
