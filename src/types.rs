@@ -212,3 +212,10 @@ pub struct Item {
     pub duration: Option<String>,
     pub object_class: Option<ObjectClass>,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct TransportInfo {
+    pub current_transport_state: String,
+    pub current_transport_status: String,
+    pub current_speed: String,
+}

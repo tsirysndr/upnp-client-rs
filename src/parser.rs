@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service};
+use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service, TransportInfo};
 use anyhow::Error;
 use elementtree::Element;
 use surf::{http::Method, Client, Config, Url};
@@ -706,4 +706,52 @@ pub fn deserialize_content_directory(
         }
     }
     Ok((containers, items))
+}
+
+pub fn parse_transport_info(xml: &str) -> Result<TransportInfo, Error> {
+    let parser = EventReader::from_str(xml);
+    let mut in_transport_state = false;
+    let mut in_transport_status = false;
+    let mut in_transport_play_speed = false;
+    let mut transport_info = TransportInfo::default();
+
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement { name, .. }) => {
+                if name.local_name == "CurrentTransportState" {
+                    in_transport_state = true;
+                }
+                if name.local_name == "CurrentTransportStatus" {
+                    in_transport_status = true;
+                }
+                if name.local_name == "CurrentSpeed" {
+                    in_transport_play_speed = true;
+                }
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                if name.local_name == "CurrentTransportState" {
+                    in_transport_state = false;
+                }
+                if name.local_name == "CurrentTransportStatus" {
+                    in_transport_status = false;
+                }
+                if name.local_name == "CurrentSpeed" {
+                    in_transport_play_speed = false;
+                }
+            }
+            Ok(XmlEvent::Characters(value)) => {
+                if in_transport_state {
+                    transport_info.current_transport_state = value.clone();
+                }
+                if in_transport_status {
+                    transport_info.current_transport_status = value.clone();
+                }
+                if in_transport_play_speed {
+                    transport_info.current_speed = value.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(transport_info)
 }
