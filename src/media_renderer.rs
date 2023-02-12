@@ -7,8 +7,11 @@ use xml_builder::{XMLBuilder, XMLElement};
 
 use crate::{
     device_client::DeviceClient,
-    parser::{parse_duration, parse_position, parse_supported_protocols, parse_volume},
-    types::{Event, LoadOptions, Metadata, ObjectClass},
+    parser::{
+        parse_duration, parse_position, parse_supported_protocols, parse_transport_info,
+        parse_volume,
+    },
+    types::{Event, LoadOptions, Metadata, ObjectClass, TransportInfo},
     BROADCAST_EVENT,
 };
 
@@ -261,6 +264,16 @@ impl MediaRendererClient {
                 yield event;
             }
         }
+    }
+
+    pub async fn get_transport_info(&self) -> Result<TransportInfo, Error> {
+        let mut params = HashMap::new();
+        params.insert("InstanceID".to_string(), "0".to_string());
+        let response = self
+            .device_client
+            .call_action("AVTransport", "GetTransportInfo", params)
+            .await?;
+        Ok(parse_transport_info(response.as_str())?)
     }
 }
 
