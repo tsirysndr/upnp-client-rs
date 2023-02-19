@@ -6,6 +6,8 @@ use crate::{
     types::{Container, Item},
 };
 use anyhow::Error;
+
+#[derive(Clone)]
 pub struct MediaServerClient {
     device_client: DeviceClient,
 }

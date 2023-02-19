@@ -24,6 +24,7 @@ pub enum MediaEvents {
     SpeedChanged,
 }
 
+#[derive(Clone)]
 pub struct MediaRendererClient {
     device_client: DeviceClient,
 }
