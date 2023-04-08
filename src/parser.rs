@@ -96,52 +96,56 @@ pub async fn parse_services(base_url: &str, xml_root: &str) -> Vec<Service> {
     let device = root
         .find("{urn:schemas-upnp-org:device-1-0}device")
         .unwrap();
-    let service_list = device.find("{urn:schemas-upnp-org:device-1-0}serviceList");
-    let services = service_list.unwrap().children();
 
-    let services: Vec<Service> = services
-        .into_iter()
-        .map(|item| Service {
-            service_type: item
-                .find("{urn:schemas-upnp-org:device-1-0}serviceType")
-                .unwrap()
-                .text()
-                .to_string(),
-            service_id: item
-                .find("{urn:schemas-upnp-org:device-1-0}serviceId")
-                .unwrap()
-                .text()
-                .to_string(),
-            control_url: item
-                .find("{urn:schemas-upnp-org:device-1-0}controlURL")
-                .unwrap()
-                .text()
-                .to_string(),
-            event_sub_url: item
-                .find("{urn:schemas-upnp-org:device-1-0}eventSubURL")
-                .unwrap()
-                .text()
-                .to_string(),
-            scpd_url: item
-                .find("{urn:schemas-upnp-org:device-1-0}SCPDURL")
-                .unwrap()
-                .text()
-                .to_string(),
-            actions: vec![],
-        })
-        .map(|mut service| {
-            service.control_url = build_absolute_url(base_url, &service.control_url);
-            service.event_sub_url = build_absolute_url(base_url, &service.event_sub_url);
-            service.scpd_url = build_absolute_url(base_url, &service.scpd_url);
-            service
-        })
-        .collect();
     let mut services_with_actions: Vec<Service> = vec![];
-    for service in &services {
-        let mut service = service.clone();
-        service.actions = parse_service_description(&service.scpd_url).await;
-        services_with_actions.push(service);
+    if let Some(service_list) = device.find("{urn:schemas-upnp-org:device-1-0}serviceList") {
+        let services = service_list.children();
+
+        let services: Vec<Service> = services
+            .into_iter()
+            .map(|item| Service {
+                service_type: item
+                    .find("{urn:schemas-upnp-org:device-1-0}serviceType")
+                    .unwrap()
+                    .text()
+                    .to_string(),
+                service_id: item
+                    .find("{urn:schemas-upnp-org:device-1-0}serviceId")
+                    .unwrap()
+                    .text()
+                    .to_string(),
+                control_url: item
+                    .find("{urn:schemas-upnp-org:device-1-0}controlURL")
+                    .unwrap()
+                    .text()
+                    .to_string(),
+                event_sub_url: item
+                    .find("{urn:schemas-upnp-org:device-1-0}eventSubURL")
+                    .unwrap()
+                    .text()
+                    .to_string(),
+                scpd_url: item
+                    .find("{urn:schemas-upnp-org:device-1-0}SCPDURL")
+                    .unwrap()
+                    .text()
+                    .to_string(),
+                actions: vec![],
+            })
+            .map(|mut service| {
+                service.control_url = build_absolute_url(base_url, &service.control_url);
+                service.event_sub_url = build_absolute_url(base_url, &service.event_sub_url);
+                service.scpd_url = build_absolute_url(base_url, &service.scpd_url);
+                service
+            })
+            .collect();
+
+        for service in &services {
+            let mut service = service.clone();
+            service.actions = parse_service_description(&service.scpd_url).await;
+            services_with_actions.push(service);
+        }
     }
+
     services_with_actions
 }
 
@@ -754,4 +758,38 @@ pub fn parse_transport_info(xml: &str) -> Result<TransportInfo, Error> {
         }
     }
     Ok(transport_info)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parser::parse_services;
+
+    #[tokio::test]
+    async fn test_parsing_device_without_service_list() {
+        const XML_ROOT: &'static str = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <root xmlns="urn:schemas-upnp-org:device-1-0">
+            <specVersion>
+                <major>1</major>
+                <minor>0</minor>
+            </specVersion>
+            <device>
+                <deviceType>urn:schemas-upnp-org:device:WLANAccessPointDevice:1</deviceType>
+                <friendlyName>NETGEAR47B64C</friendlyName>
+                <manufacturer>NETGEAR</manufacturer>
+                <manufacturerURL>https://www.netgear.com</manufacturerURL>
+                <modelDescription>NETGEAR Dual Band Access Point</modelDescription>
+                <modelName>WAX214</modelName>
+                <modelNumber>WAX214</modelNumber>
+                <modelURL>https://www.netgear.com</modelURL>
+                <firmwareVersion>2.1.1.3</firmwareVersion>
+                <insightMode>0</insightMode>
+                <serialNumber>XXXXXXXXX</serialNumber>
+                <UDN>uuid:919ba4ec-ec93-490f-b0e3-80CC9C47B64C</UDN>
+                <presentationURL>http://xxxxxx:1337/</presentationURL>
+            </device>
+        </root>"#;
+
+        let result = parse_services("http://xxxxxx:1337/", XML_ROOT).await;
+        assert_eq!(result.len(), 0);
+    }
 }
