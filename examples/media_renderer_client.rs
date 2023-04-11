@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let kodi_device = kodi_device.unwrap();
-    let device_client = DeviceClient::new(&kodi_device.location).connect().await?;
+    let device_client = DeviceClient::new(&kodi_device.location)?.connect().await?;
     let mut media_renderer = MediaRendererClient::new(device_client);
 
     let options = LoadOptions {
