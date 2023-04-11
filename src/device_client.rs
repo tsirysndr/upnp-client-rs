@@ -1,12 +1,4 @@
-use std::{
-    collections::HashMap,
-    env,
-    net::TcpListener,
-    sync::{
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, env, net::TcpListener, sync::Arc, time::Duration};
 
 use crate::{
     parser::{
@@ -110,17 +102,17 @@ impl DeviceClient {
 
         for (name, value) in params {
             let mut param = XMLElement::new(name.as_str());
-            param.add_text(value)?;
-            action.add_child(param)?;
+            param.add_text(value).map_err(|e| anyhow!("{:?}", e))?;
+            action.add_child(param).map_err(|e| anyhow!("{:?}", e))?;
         }
 
-        body.add_child(action)?;
-        envelope.add_child(body)?;
+        body.add_child(action).map_err(|e| anyhow!("{:?}", e))?;
+        envelope.add_child(body).map_err(|e| anyhow!("{:?}", e))?;
 
         xml.set_root_element(envelope);
 
         let mut writer: Vec<u8> = Vec::new();
-        xml.generate(&mut writer)?;
+        xml.generate(&mut writer).map_err(|e| anyhow!("{:?}", e))?;
         let xml = String::from_utf8(writer)?;
 
         let soap_action = format!("\"{}#{}\"", service.service_type, action_name);
@@ -136,10 +128,7 @@ impl DeviceClient {
             .send()
             .await
             .map_err(|e| anyhow!(e.to_string()))?;
-        res
-            .body_string()
-            .await
-            .map_err(|e| anyhow!(e.to_string()))
+        res.body_string().await.map_err(|e| anyhow!(e.to_string()))
     }
 
     async fn get_service_description(&self, service_id: &str) -> Result<Service> {
@@ -148,7 +137,12 @@ impl DeviceClient {
                 .services
                 .iter()
                 .find(|s| s.service_id == service_id)
-                .ok_or_else(|| anyhow!("Service with requested service_id {} does not exist", service_id))?;
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Service with requested service_id {} does not exist",
+                        service_id
+                    )
+                })?;
             return Ok(service.clone());
         }
         Err(anyhow!("Device not connected"))
