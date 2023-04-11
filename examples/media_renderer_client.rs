@@ -10,7 +10,7 @@ const KODI_MEDIA_RENDERER: &str = "Kodi - Media Renderer";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let devices = discover_pnp_locations();
+    let devices = discover_pnp_locations().await?;
     tokio::pin!(devices);
 
     let mut kodi_device: Option<Device> = None;
