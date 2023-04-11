@@ -1,23 +1,26 @@
 use std::time::Duration;
 
 use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service, TransportInfo};
-use anyhow::Error;
+use anyhow::{anyhow, Result};
 use elementtree::Element;
 use surf::{http::Method, Client, Config, Url};
 use xml::reader::XmlEvent;
 use xml::EventReader;
 
-pub async fn parse_location(location: &str) -> Result<Device, Error> {
+pub async fn parse_location(location: &str) -> Result<Device> {
     let client: Client = Config::new()
         .set_timeout(Some(Duration::from_secs(5)))
-        .try_into()
-        .unwrap();
-    let req = surf::Request::new(Method::Get, location.parse().unwrap());
-    let xml_root = client.recv_string(req).await.unwrap();
+        .try_into()?;
+    let req = surf::Request::new(Method::Get, location.parse()?);
+    let xml_root = client
+        .recv_string(req)
+        .await
+        .map_err(|e| anyhow!("Failed to retrieve xml from device endpoint: {}", e))?;
 
-    let mut device: Device = Device::default();
-
-    device.location = location.to_string();
+    let mut device = Device {
+        location: location.to_string(),
+        ..Default::default()
+    };
 
     device.device_type = parse_attribute(
         &xml_root,
@@ -67,23 +70,31 @@ pub async fn parse_location(location: &str) -> Result<Device, Error> {
     )?;
 
     let base_url = location.split('/').take(3).collect::<Vec<&str>>().join("/");
-    device.services = parse_services(&base_url, &xml_root).await;
+    device.services = parse_services(&base_url, &xml_root).await?;
 
     Ok(device)
 }
 
-fn parse_attribute(xml_root: &str, xml_name: &str) -> Result<String, Error> {
+fn parse_attribute(xml_root: &str, xml_name: &str) -> Result<String> {
     let root = Element::from_reader(xml_root.as_bytes())?;
     let mut xml_name = xml_name.split('/');
-    match root.find(xml_name.next().unwrap()) {
+    match root.find(
+        xml_name
+            .next()
+            .ok_or_else(|| anyhow!("xml_name ended unexpectedly"))?,
+    ) {
         Some(element) => {
-            let element = element.find(xml_name.next().unwrap());
+            let element = element.find(
+                xml_name
+                    .next()
+                    .ok_or_else(|| anyhow!("xml_name ended unexpectedly"))?,
+            );
             match element {
                 Some(element) => {
                     return Ok(element.text().to_string());
                 }
                 None => {
-                    return Ok("".to_string());
+                    Ok("".to_string())
                 }
             }
         }
@@ -91,125 +102,127 @@ fn parse_attribute(xml_root: &str, xml_name: &str) -> Result<String, Error> {
     }
 }
 
-pub async fn parse_services(base_url: &str, xml_root: &str) -> Vec<Service> {
-    let root = Element::from_reader(xml_root.as_bytes()).unwrap();
+pub async fn parse_services(base_url: &str, xml_root: &str) -> Result<Vec<Service>> {
+    let root = Element::from_reader(xml_root.as_bytes())?;
     let device = root
         .find("{urn:schemas-upnp-org:device-1-0}device")
-        .unwrap();
+        .ok_or_else(|| anyhow!("Invalid response from device"))?;
 
     let mut services_with_actions: Vec<Service> = vec![];
     if let Some(service_list) = device.find("{urn:schemas-upnp-org:device-1-0}serviceList") {
-        let services = service_list.children();
+        let xml_services = service_list.children();
 
-        let services: Vec<Service> = services
-            .into_iter()
-            .map(|item| Service {
-                service_type: item
+        let mut services = Vec::new();
+        for xml_service in xml_services {
+            let mut service = Service {
+                service_type: xml_service
                     .find("{urn:schemas-upnp-org:device-1-0}serviceType")
-                    .unwrap()
+                    .ok_or_else(|| anyhow!("Service missing serviceType"))?
                     .text()
                     .to_string(),
-                service_id: item
+                service_id: xml_service
                     .find("{urn:schemas-upnp-org:device-1-0}serviceId")
-                    .unwrap()
+                    .ok_or_else(|| anyhow!("Service missing serviceId"))?
                     .text()
                     .to_string(),
-                control_url: item
+                control_url: xml_service
                     .find("{urn:schemas-upnp-org:device-1-0}controlURL")
-                    .unwrap()
+                    .ok_or_else(|| anyhow!("Service missing controlURL"))?
                     .text()
                     .to_string(),
-                event_sub_url: item
+                event_sub_url: xml_service
                     .find("{urn:schemas-upnp-org:device-1-0}eventSubURL")
-                    .unwrap()
+                    .ok_or_else(|| anyhow!("Service missing eventSubURL"))?
                     .text()
                     .to_string(),
-                scpd_url: item
+                scpd_url: xml_service
                     .find("{urn:schemas-upnp-org:device-1-0}SCPDURL")
-                    .unwrap()
+                    .ok_or_else(|| anyhow!("Service missing SCPDURL"))?
                     .text()
                     .to_string(),
                 actions: vec![],
-            })
-            .map(|mut service| {
-                service.control_url = build_absolute_url(base_url, &service.control_url);
-                service.event_sub_url = build_absolute_url(base_url, &service.event_sub_url);
-                service.scpd_url = build_absolute_url(base_url, &service.scpd_url);
-                service
-            })
-            .collect();
+            };
+
+            service.control_url = build_absolute_url(base_url, &service.control_url)?;
+            service.event_sub_url = build_absolute_url(base_url, &service.event_sub_url)?;
+            service.scpd_url = build_absolute_url(base_url, &service.scpd_url)?;
+
+            services.push(service);
+        }
 
         for service in &services {
             let mut service = service.clone();
-            service.actions = parse_service_description(&service.scpd_url).await;
+            service.actions = parse_service_description(&service.scpd_url).await?;
             services_with_actions.push(service);
         }
     }
 
-    services_with_actions
+    Ok(services_with_actions)
 }
 
-fn build_absolute_url(base_url: &str, relative_url: &str) -> String {
-    let base_url = Url::parse(base_url).unwrap();
-    base_url.join(relative_url).unwrap().to_string()
+fn build_absolute_url(base_url: &str, relative_url: &str) -> Result<String> {
+    let base_url = Url::parse(base_url)?;
+    Ok(base_url.join(relative_url)?.to_string())
 }
 
-pub async fn parse_service_description(scpd_url: &str) -> Vec<Action> {
+pub async fn parse_service_description(scpd_url: &str) -> Result<Vec<Action>> {
     let client: Client = Config::new()
         .set_timeout(Some(Duration::from_secs(5)))
-        .try_into()
-        .unwrap();
-    let req = surf::Request::new(Method::Get, scpd_url.parse().unwrap());
-    if let Ok(xml_root) = client.recv_string(req).await {
-        if let Ok(root) = Element::from_reader(xml_root.as_bytes()) {
-            let action_list = root.find("{urn:schemas-upnp-org:service-1-0}actionList");
+        .try_into()?;
+    let req = surf::Request::new(Method::Get, scpd_url.parse()?);
 
-            if action_list.is_none() {
-                return vec![];
-            }
+    let xml_root = client
+        .recv_string(req)
+        .await
+        .map_err(|e| anyhow!("Failed to retrieve xml response from device: {}", e))?;
+    let root = Element::from_reader(xml_root.as_bytes())?;
 
-            let action_list = action_list.unwrap().children();
-            let actions: Vec<Action> = action_list
-                .into_iter()
-                .map(|item| {
-                    let name = item
+    let action_list = match root.find("{urn:schemas-upnp-org:service-1-0}actionList") {
+        Some(action_list) => action_list,
+        None => return Ok(vec![]),
+    };
+
+    let mut actions = Vec::new();
+    for xml_action in action_list.children() {
+        let mut action = Action {
+            name: xml_action
+                .find("{urn:schemas-upnp-org:service-1-0}name")
+                .ok_or_else(|| anyhow!("Service::Action missing name"))?
+                .text()
+                .to_string(),
+            arguments: vec![],
+        };
+
+        if let Some(arguments) = xml_action.find("{urn:schemas-upnp-org:service-1-0}argumentList") {
+            for xml_argument in arguments.children() {
+                let argument = Argument {
+                    name: xml_argument
                         .find("{urn:schemas-upnp-org:service-1-0}name")
-                        .unwrap()
-                        .text();
-                    let arguments = item.find("{urn:schemas-upnp-org:service-1-0}argumentList");
-                    let arguments = arguments.unwrap().children();
-                    let arguments = arguments.into_iter().map(|item| {
-                        let name = item
-                            .find("{urn:schemas-upnp-org:service-1-0}name")
-                            .unwrap()
-                            .text();
-                        let direction = item
-                            .find("{urn:schemas-upnp-org:service-1-0}direction")
-                            .unwrap()
-                            .text();
-                        let related_state_variable = item
-                            .find("{urn:schemas-upnp-org:service-1-0}relatedStateVariable")
-                            .unwrap()
-                            .text();
-                        Argument {
-                            name: name.to_string(),
-                            direction: direction.to_string(),
-                            related_state_variable: related_state_variable.to_string(),
-                        }
-                    });
-                    Action {
-                        name: name.to_string(),
-                        arguments: arguments.collect(),
-                    }
-                })
-                .collect();
-            return actions;
+                        .ok_or_else(|| anyhow!("Service::Action::Argument missing name"))?
+                        .text()
+                        .to_string(),
+                    direction: xml_argument
+                        .find("{urn:schemas-upnp-org:service-1-0}direction")
+                        .ok_or_else(|| anyhow!("Service::Action::Argument missing direction"))?
+                        .text()
+                        .to_string(),
+                    related_state_variable: xml_argument
+                        .find("{urn:schemas-upnp-org:service-1-0}relatedStateVariable")
+                        .ok_or_else(|| {
+                            anyhow!("Service::Action::Argument missing relatedStateVariable")
+                        })?
+                        .text()
+                        .to_string(),
+                };
+                action.arguments.push(argument);
+            }
         }
+        actions.push(action);
     }
-    vec![]
+    Ok(actions)
 }
 
-pub fn parse_volume(xml_root: &str) -> Result<u8, Error> {
+pub fn parse_volume(xml_root: &str) -> Result<u8> {
     let parser = EventReader::from_str(xml_root);
     let mut in_current_volume = false;
     let mut current_volume: Option<u8> = None;
@@ -227,16 +240,16 @@ pub fn parse_volume(xml_root: &str) -> Result<u8, Error> {
             }
             Ok(XmlEvent::Characters(volume)) => {
                 if in_current_volume {
-                    current_volume = Some(volume.parse().unwrap());
+                    current_volume = Some(volume.parse()?);
                 }
             }
             _ => {}
         }
     }
-    Ok(current_volume.unwrap())
+    current_volume.ok_or_else(|| anyhow!("Invalid response from device"))
 }
 
-pub fn parse_duration(xml_root: &str) -> Result<u32, Error> {
+pub fn parse_duration(xml_root: &str) -> Result<u32> {
     let parser = EventReader::from_str(xml_root);
     let mut in_duration = false;
     let mut duration: Option<String> = None;
@@ -254,7 +267,7 @@ pub fn parse_duration(xml_root: &str) -> Result<u32, Error> {
             }
             Ok(XmlEvent::Characters(duration_str)) => {
                 if in_duration {
-                    let duration_str = duration_str.replace(":", "");
+                    let duration_str = duration_str.replace(':', "");
                     duration = Some(duration_str);
                 }
             }
@@ -262,14 +275,14 @@ pub fn parse_duration(xml_root: &str) -> Result<u32, Error> {
         }
     }
 
-    let duration = duration.unwrap();
-    let hours = duration[0..2].parse::<u32>().unwrap();
-    let minutes = duration[2..4].parse::<u32>().unwrap();
-    let seconds = duration[4..6].parse::<u32>().unwrap();
+    let duration = duration.ok_or_else(|| anyhow!("Invalid response from device"))?;
+    let hours = duration[0..2].parse::<u32>()?;
+    let minutes = duration[2..4].parse::<u32>()?;
+    let seconds = duration[4..6].parse::<u32>()?;
     Ok(hours * 3600 + minutes * 60 + seconds)
 }
 
-pub fn parse_position(xml_root: &str) -> Result<u32, Error> {
+pub fn parse_position(xml_root: &str) -> Result<u32> {
     let parser = EventReader::from_str(xml_root);
     let mut in_position = false;
     let mut position: Option<String> = None;
@@ -287,7 +300,7 @@ pub fn parse_position(xml_root: &str) -> Result<u32, Error> {
             }
             Ok(XmlEvent::Characters(position_str)) => {
                 if in_position {
-                    let position_str = position_str.replace(":", "");
+                    let position_str = position_str.replace(':', "");
                     position = Some(position_str);
                 }
             }
@@ -295,14 +308,14 @@ pub fn parse_position(xml_root: &str) -> Result<u32, Error> {
         }
     }
 
-    let position = position.unwrap();
-    let hours = position[0..2].parse::<u32>().unwrap();
-    let minutes = position[2..4].parse::<u32>().unwrap();
-    let seconds = position[4..6].parse::<u32>().unwrap();
+    let position = position.ok_or_else(|| anyhow!("Invalid response from device"))?;
+    let hours = position[0..2].parse::<u32>()?;
+    let minutes = position[2..4].parse::<u32>()?;
+    let seconds = position[4..6].parse::<u32>()?;
     Ok(hours * 3600 + minutes * 60 + seconds)
 }
 
-pub fn parse_supported_protocols(xml_root: &str) -> Result<Vec<String>, Error> {
+pub fn parse_supported_protocols(xml_root: &str) -> Result<Vec<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut in_protocol = false;
     let mut protocols: String = "".to_string();
@@ -326,10 +339,10 @@ pub fn parse_supported_protocols(xml_root: &str) -> Result<Vec<String>, Error> {
             _ => {}
         }
     }
-    Ok(protocols.split(",").map(|s| s.to_string()).collect())
+    Ok(protocols.split(',').map(|s| s.to_string()).collect())
 }
 
-pub fn parse_last_change(xml_root: &str) -> Result<Option<String>, Error> {
+pub fn parse_last_change(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut result = None;
     let mut in_last_change = false;
@@ -356,95 +369,75 @@ pub fn parse_last_change(xml_root: &str) -> Result<Option<String>, Error> {
     Ok(result)
 }
 
-pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>, Error> {
+pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_play_mode: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "CurrentPlayMode" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            current_play_mode = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "CurrentPlayMode" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        current_play_mode = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(current_play_mode)
 }
 
-pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>, Error> {
+pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut transport_state: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "TransportState" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            transport_state = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "TransportState" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        transport_state = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(transport_state)
 }
 
-pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>, Error> {
+pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut av_transport_uri_metadata: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "AVTransportURIMetaData" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            av_transport_uri_metadata = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "AVTransportURIMetaData" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        av_transport_uri_metadata = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(av_transport_uri_metadata)
 }
 
-pub fn parse_current_track_metadata(xml_root: &str) -> Result<Option<String>, Error> {
+pub fn parse_current_track_metadata(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_track_metadata: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "CurrentTrackMetaData" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            current_track_metadata = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "CurrentTrackMetaData" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        current_track_metadata = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(current_track_metadata)
 }
 
-pub fn deserialize_metadata(xml: &str) -> Result<Metadata, Error> {
+pub fn deserialize_metadata(xml: &str) -> Result<Metadata> {
     let parser = EventReader::from_str(xml);
     let mut in_title = false;
     let mut in_artist = false;
@@ -522,7 +515,7 @@ pub fn deserialize_metadata(xml: &str) -> Result<Metadata, Error> {
     })
 }
 
-pub fn parse_browse_response(xml: &str, ip: &str) -> Result<(Vec<Container>, Vec<Item>), Error> {
+pub fn parse_browse_response(xml: &str, ip: &str) -> Result<(Vec<Container>, Vec<Item>)> {
     let parser = EventReader::from_str(xml);
     let mut in_result = false;
     let mut result: (Vec<Container>, Vec<Item>) = (Vec::new(), Vec::new());
@@ -550,10 +543,7 @@ pub fn parse_browse_response(xml: &str, ip: &str) -> Result<(Vec<Container>, Vec
     Ok(result)
 }
 
-pub fn deserialize_content_directory(
-    xml: &str,
-    ip: &str,
-) -> Result<(Vec<Container>, Vec<Item>), Error> {
+pub fn deserialize_content_directory(xml: &str, ip: &str) -> Result<(Vec<Container>, Vec<Item>)> {
     let parser = EventReader::from_str(xml);
     let mut in_container = false;
     let mut in_item = false;
@@ -625,8 +615,7 @@ pub fn deserialize_content_directory(
                             items.last_mut().unwrap().protocol_info = attr.value.clone();
                         }
                         if attr.name.local_name == "size" {
-                            items.last_mut().unwrap().size =
-                                Some(attr.value.parse::<u64>().unwrap());
+                            items.last_mut().unwrap().size = Some(attr.value.parse::<u64>()?);
                         }
                         if attr.name.local_name == "duration" {
                             items.last_mut().unwrap().duration = Some(attr.value.clone());
@@ -712,7 +701,7 @@ pub fn deserialize_content_directory(
     Ok((containers, items))
 }
 
-pub fn parse_transport_info(xml: &str) -> Result<TransportInfo, Error> {
+pub fn parse_transport_info(xml: &str) -> Result<TransportInfo> {
     let parser = EventReader::from_str(xml);
     let mut in_transport_state = false;
     let mut in_transport_status = false;

@@ -8,7 +8,7 @@ const KODI_MEDIA_SERVER: &str = "Kodi - Media Server";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let devices = discover_pnp_locations();
+    let devices = discover_pnp_locations().await?;
     tokio::pin!(devices);
 
     let mut kodi_device: Option<Device> = None;
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let kodi_device = kodi_device.unwrap();
-    let device_client = DeviceClient::new(&kodi_device.location).connect().await?;
+    let device_client = DeviceClient::new(&kodi_device.location)?.connect().await?;
     let media_server_client = MediaServerClient::new(device_client);
     let results = media_server_client
         .browse("0", "BrowseDirectChildren")

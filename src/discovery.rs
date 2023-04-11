@@ -1,13 +1,10 @@
-use anyhow::Error;
+use anyhow::{anyhow, Result};
 use async_stream::stream;
 use futures_util::Stream;
-use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::str;
-use std::thread::sleep;
-use std::time::Duration;
+use tokio::net::UdpSocket;
 
 use crate::parser::parse_location;
 use crate::types::Device;
@@ -19,44 +16,45 @@ const DISCOVERY_REQUEST: &str = "M-SEARCH * HTTP/1.1\r\n\
                                  ST: ssdp:all\r\n\
                                  \r\n";
 
-pub fn discover_pnp_locations() -> impl Stream<Item = Device> {
-    // Create a UDP socket
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+pub async fn discover_pnp_locations() -> Result<impl Stream<Item = Device>> {
+    let any: SocketAddr = ([0, 0, 0, 0], 0).into();
+    let socket = UdpSocket::bind(any).await?;
+    socket.join_multicast_v4(Ipv4Addr::new(239, 255, 255, 250), Ipv4Addr::new(0, 0, 0, 0))?;
 
     // Set the socket address to the multicast IP and port for UPnP device discovery
-    let socket_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250)), 1900).into();
-
-    // Join the UPnP multicast group
-    socket
-        .join_multicast_v4(
-            &Ipv4Addr::new(239, 255, 255, 250),
-            &Ipv4Addr::new(0, 0, 0, 0),
-        )
-        .unwrap();
+    let socket_addr: SocketAddr = ([239, 255, 255, 250], 1900).into();
 
     // Send the discovery request
     socket
         .send_to(DISCOVERY_REQUEST.as_bytes(), &socket_addr)
-        .unwrap();
+        .await?;
 
-    stream! {
+    Ok(stream! {
         loop {
-          // Receive the discovery response
-          let mut buf = [MaybeUninit::uninit(); 2048];
-          let (size, _) = socket.recv_from(&mut buf).unwrap();
-          // Convert the response to a string
-          let response =
-              str::from_utf8(unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, size) })
-                  .unwrap();
-          let headers = parse_raw_http_response(response).unwrap();
-          let location = *headers.get("location").unwrap();
-          yield parse_location(location).await.unwrap();
-          sleep(Duration::from_millis(500));
-      }
-    }
+            async fn get_next(socket: &UdpSocket) -> Result<String> {
+                // Receive the discovery response
+                let mut buf = [0; 2048];
+                let (size, _) = socket.recv_from(&mut buf).await?;
+                // Convert the response to a string
+                let response =
+                    str::from_utf8(unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, size) })?;
+                let headers = parse_raw_http_response(response)?;
+                let location = headers.get("location")
+                    .ok_or_else(|| anyhow!("Response header missing location"))?
+                    .to_string();
+                Ok(location)
+            }
+
+            if let Ok(location) = get_next(&socket).await {
+                if let Ok(device) = parse_location(&location).await {
+                    yield device;
+                }
+            }
+        }
+    })
 }
 
-fn parse_raw_http_response(response_str: &str) -> Result<HashMap<String, &str>, Error> {
+fn parse_raw_http_response(response_str: &str) -> Result<HashMap<String, &str>> {
     let mut headers = HashMap::new();
 
     match response_str.split("\r\n\r\n").next() {
@@ -70,6 +68,6 @@ fn parse_raw_http_response(response_str: &str) -> Result<HashMap<String, &str>, 
             }
             Ok(headers)
         }
-        None => Err(Error::msg("Invalid HTTP response")),
+        None => Err(anyhow!("Invalid HTTP response")),
     }
 }

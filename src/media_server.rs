@@ -37,7 +37,7 @@ impl MediaServerClient {
 
         let ip = self.device_client.ip();
 
-        Ok(parse_browse_response(&response, &ip)?)
+        parse_browse_response(&response, &ip)
     }
 
     pub async fn get_sort_capabilities(&self) -> Result<(), Error> {
