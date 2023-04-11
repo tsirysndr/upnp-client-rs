@@ -93,9 +93,7 @@ fn parse_attribute(xml_root: &str, xml_name: &str) -> Result<String> {
                 Some(element) => {
                     return Ok(element.text().to_string());
                 }
-                None => {
-                    Ok("".to_string())
-                }
+                None => Ok("".to_string()),
             }
         }
         None => Ok("".to_string()),
@@ -373,7 +371,10 @@ pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_play_mode: Option<String> = None;
     for e in parser.into_iter().flatten() {
-        if let XmlEvent::StartElement { name, attributes, .. } = e {
+        if let XmlEvent::StartElement {
+            name, attributes, ..
+        } = e
+        {
             if name.local_name == "CurrentPlayMode" {
                 for attr in attributes {
                     if attr.name.local_name == "val" {
@@ -390,7 +391,10 @@ pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut transport_state: Option<String> = None;
     for e in parser.into_iter().flatten() {
-        if let XmlEvent::StartElement { name, attributes, .. } = e {
+        if let XmlEvent::StartElement {
+            name, attributes, ..
+        } = e
+        {
             if name.local_name == "TransportState" {
                 for attr in attributes {
                     if attr.name.local_name == "val" {
@@ -407,7 +411,10 @@ pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>>
     let parser = EventReader::from_str(xml_root);
     let mut av_transport_uri_metadata: Option<String> = None;
     for e in parser.into_iter().flatten() {
-        if let XmlEvent::StartElement { name, attributes, .. } = e {
+        if let XmlEvent::StartElement {
+            name, attributes, ..
+        } = e
+        {
             if name.local_name == "AVTransportURIMetaData" {
                 for attr in attributes {
                     if attr.name.local_name == "val" {
@@ -424,7 +431,10 @@ pub fn parse_current_track_metadata(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_track_metadata: Option<String> = None;
     for e in parser.into_iter().flatten() {
-        if let XmlEvent::StartElement { name, attributes, .. } = e {
+        if let XmlEvent::StartElement {
+            name, attributes, ..
+        } = e
+        {
             if name.local_name == "CurrentTrackMetaData" {
                 for attr in attributes {
                     if attr.name.local_name == "val" {
@@ -778,7 +788,9 @@ mod tests {
             </device>
         </root>"#;
 
-        let result = parse_services("http://xxxxxx:1337/", XML_ROOT).await;
+        let result = parse_services("http://xxxxxx:1337/", XML_ROOT)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 0);
     }
 }
