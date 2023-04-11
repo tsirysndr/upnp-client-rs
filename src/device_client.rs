@@ -3,7 +3,6 @@ use std::{
     env,
     net::TcpListener,
     sync::{
-        mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
     time::Duration,
@@ -137,10 +136,10 @@ impl DeviceClient {
             .send()
             .await
             .map_err(|e| Error::msg(e.to_string()))?;
-        Ok(res
+        res
             .body_string()
             .await
-            .map_err(|e| Error::msg(e.to_string()))?)
+            .map_err(|e| Error::msg(e.to_string()))
     }
 
     async fn get_service_description(&self, service_id: &str) -> Result<Service, Error> {
@@ -207,7 +206,7 @@ impl DeviceClient {
 
     async fn ensure_eventing_server(&mut self) -> Result<(String, u16), Error> {
         let addr: &str = "0.0.0.0:0";
-        let listener = TcpListener::bind(&addr).unwrap();
+        let listener = TcpListener::bind(addr).unwrap();
 
         let service = make_service_fn(|_: &AddrStream| async {
             Ok::<_, hyper::Error>(service_fn(|req: Request<Body>| async move {
@@ -231,68 +230,56 @@ impl DeviceClient {
                 let current_track_metadata =
                     parse_current_track_metadata(last_change.as_str()).unwrap();
 
-                match transport_state {
-                    Some(state) => {
-                        let tx = BROADCAST_EVENT.lock().unwrap();
-                        let tx = tx.as_ref().clone();
-                        let ev = AVTransportEvent::TransportState {
-                            sid: sid.clone(),
-                            transport_state: state,
-                        };
-                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
-                    }
-                    None => {}
+                if let Some(state) = transport_state {
+                    let tx = BROADCAST_EVENT.lock().unwrap();
+                    let tx = tx.as_ref();
+                    let ev = AVTransportEvent::TransportState {
+                        sid: sid.clone(),
+                        transport_state: state,
+                    };
+                    tx.unwrap().send(Event::AVTransport(ev)).unwrap();
                 }
 
-                match play_mode {
-                    Some(mode) => {
-                        let tx = BROADCAST_EVENT.lock().unwrap();
-                        let tx = tx.as_ref().clone();
-                        let ev = AVTransportEvent::CurrentPlayMode {
-                            sid: sid.clone(),
-                            play_mode: mode,
-                        };
-                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
-                    }
-                    None => {}
+                if let Some(mode) = play_mode {
+                    let tx = BROADCAST_EVENT.lock().unwrap();
+                    let tx = tx.as_ref();
+                    let ev = AVTransportEvent::CurrentPlayMode {
+                        sid: sid.clone(),
+                        play_mode: mode,
+                    };
+                    tx.unwrap().send(Event::AVTransport(ev)).unwrap();
                 }
 
-                match av_transport_uri_metadata {
-                    Some(metadata) => {
-                        let tx = BROADCAST_EVENT.lock().unwrap();
-                        let tx = tx.as_ref().clone();
-                        let m = deserialize_metadata(metadata.as_str()).unwrap();
-                        let ev = AVTransportEvent::AVTransportURIMetaData {
-                            sid: sid.clone(),
-                            url: m.url,
-                            title: m.title,
-                            artist: m.artist,
-                            album: m.album,
-                            album_art_uri: m.album_art_uri,
-                            genre: m.genre,
-                        };
-                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
-                    }
-                    None => {}
+                if let Some(metadata) = av_transport_uri_metadata {
+                    let tx = BROADCAST_EVENT.lock().unwrap();
+                    let tx = tx.as_ref();
+                    let m = deserialize_metadata(metadata.as_str()).unwrap();
+                    let ev = AVTransportEvent::AVTransportURIMetaData {
+                        sid: sid.clone(),
+                        url: m.url,
+                        title: m.title,
+                        artist: m.artist,
+                        album: m.album,
+                        album_art_uri: m.album_art_uri,
+                        genre: m.genre,
+                    };
+                    tx.unwrap().send(Event::AVTransport(ev)).unwrap();
                 }
 
-                match current_track_metadata {
-                    Some(metadata) => {
-                        let m = deserialize_metadata(metadata.as_str()).unwrap();
-                        let tx = BROADCAST_EVENT.lock().unwrap();
-                        let tx = tx.as_ref().clone();
-                        let ev = AVTransportEvent::CurrentTrackMetadata {
-                            sid: sid.clone(),
-                            url: m.url,
-                            title: m.title,
-                            artist: m.artist,
-                            album: m.album,
-                            album_art_uri: m.album_art_uri,
-                            genre: m.genre,
-                        };
-                        tx.unwrap().send(Event::AVTransport(ev)).unwrap();
-                    }
-                    None => {}
+                if let Some(metadata) = current_track_metadata {
+                    let m = deserialize_metadata(metadata.as_str()).unwrap();
+                    let tx = BROADCAST_EVENT.lock().unwrap();
+                    let tx = tx.as_ref();
+                    let ev = AVTransportEvent::CurrentTrackMetadata {
+                        sid: sid.clone(),
+                        url: m.url,
+                        title: m.title,
+                        artist: m.artist,
+                        album: m.album,
+                        album_art_uri: m.album_art_uri,
+                        genre: m.genre,
+                    };
+                    tx.unwrap().send(Event::AVTransport(ev)).unwrap();
                 }
 
                 Ok::<_, hyper::Error>(Response::new(Body::empty()))
@@ -327,7 +314,7 @@ impl DeviceClient {
 }
 
 fn resolve_service(service_id: &str) -> String {
-    match service_id.contains(":") {
+    match service_id.contains(':') {
         true => service_id.to_string(),
         false => format!("urn:upnp-org:serviceId:{}", service_id),
     }

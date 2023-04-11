@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service, TransportInfo};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use elementtree::Element;
 use surf::{http::Method, Client, Config, Url};
 use xml::reader::XmlEvent;
@@ -17,9 +17,10 @@ pub async fn parse_location(location: &str) -> Result<Device> {
         .await
         .map_err(|e| anyhow!("Failed to retrieve xml from device endpoint: {}", e))?;
 
-    let mut device: Device = Device::default();
-
-    device.location = location.to_string();
+    let mut device = Device {
+        location: location.to_string(),
+        ..Default::default()
+    };
 
     device.device_type = parse_attribute(
         &xml_root,
@@ -93,7 +94,7 @@ fn parse_attribute(xml_root: &str, xml_name: &str) -> Result<String> {
                     return Ok(element.text().to_string());
                 }
                 None => {
-                    return Ok("".to_string());
+                    Ok("".to_string())
                 }
             }
         }
@@ -218,7 +219,7 @@ pub async fn parse_service_description(scpd_url: &str) -> Result<Vec<Action>> {
         }
         actions.push(action);
     }
-    return Ok(actions);
+    Ok(actions)
 }
 
 pub fn parse_volume(xml_root: &str) -> Result<u8> {
@@ -245,7 +246,7 @@ pub fn parse_volume(xml_root: &str) -> Result<u8> {
             _ => {}
         }
     }
-    Ok(current_volume.ok_or_else(|| anyhow!("Invalid response from device"))?)
+    current_volume.ok_or_else(|| anyhow!("Invalid response from device"))
 }
 
 pub fn parse_duration(xml_root: &str) -> Result<u32> {
@@ -266,7 +267,7 @@ pub fn parse_duration(xml_root: &str) -> Result<u32> {
             }
             Ok(XmlEvent::Characters(duration_str)) => {
                 if in_duration {
-                    let duration_str = duration_str.replace(":", "");
+                    let duration_str = duration_str.replace(':', "");
                     duration = Some(duration_str);
                 }
             }
@@ -299,7 +300,7 @@ pub fn parse_position(xml_root: &str) -> Result<u32> {
             }
             Ok(XmlEvent::Characters(position_str)) => {
                 if in_position {
-                    let position_str = position_str.replace(":", "");
+                    let position_str = position_str.replace(':', "");
                     position = Some(position_str);
                 }
             }
@@ -338,7 +339,7 @@ pub fn parse_supported_protocols(xml_root: &str) -> Result<Vec<String>> {
             _ => {}
         }
     }
-    Ok(protocols.split(",").map(|s| s.to_string()).collect())
+    Ok(protocols.split(',').map(|s| s.to_string()).collect())
 }
 
 pub fn parse_last_change(xml_root: &str) -> Result<Option<String>> {
@@ -371,20 +372,15 @@ pub fn parse_last_change(xml_root: &str) -> Result<Option<String>> {
 pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_play_mode: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "CurrentPlayMode" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            current_play_mode = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "CurrentPlayMode" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        current_play_mode = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(current_play_mode)
@@ -393,20 +389,15 @@ pub fn parse_current_play_mode(xml_root: &str) -> Result<Option<String>> {
 pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut transport_state: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "TransportState" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            transport_state = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "TransportState" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        transport_state = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(transport_state)
@@ -415,20 +406,15 @@ pub fn parse_transport_state(xml_root: &str) -> Result<Option<String>> {
 pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut av_transport_uri_metadata: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "AVTransportURIMetaData" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            av_transport_uri_metadata = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "AVTransportURIMetaData" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        av_transport_uri_metadata = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(av_transport_uri_metadata)
@@ -437,20 +423,15 @@ pub fn parse_av_transport_uri_metadata(xml_root: &str) -> Result<Option<String>>
 pub fn parse_current_track_metadata(xml_root: &str) -> Result<Option<String>> {
     let parser = EventReader::from_str(xml_root);
     let mut current_track_metadata: Option<String> = None;
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement {
-                name, attributes, ..
-            }) => {
-                if name.local_name == "CurrentTrackMetaData" {
-                    for attr in attributes {
-                        if attr.name.local_name == "val" {
-                            current_track_metadata = Some(attr.value);
-                        }
+    for e in parser.into_iter().flatten() {
+        if let XmlEvent::StartElement { name, attributes, .. } = e {
+            if name.local_name == "CurrentTrackMetaData" {
+                for attr in attributes {
+                    if attr.name.local_name == "val" {
+                        current_track_metadata = Some(attr.value);
                     }
                 }
             }
-            _ => {}
         }
     }
     Ok(current_track_metadata)
