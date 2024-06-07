@@ -1,3 +1,4 @@
+use std::str::Split;
 use std::time::Duration;
 
 use crate::types::{Action, Argument, Container, Device, Item, Metadata, Service, TransportInfo};
@@ -283,6 +284,7 @@ pub fn parse_duration(xml_root: &str) -> Result<u32> {
 pub fn parse_position(xml_root: &str) -> Result<u32> {
     let parser = EventReader::from_str(xml_root);
     let mut in_position = false;
+    let mut position_iter: Split<'_, &str>;
     let mut position: Option<String> = None;
     for e in parser {
         match e {
@@ -298,7 +300,6 @@ pub fn parse_position(xml_root: &str) -> Result<u32> {
             }
             Ok(XmlEvent::Characters(position_str)) => {
                 if in_position {
-                    let position_str = position_str.replace(':', "");
                     position = Some(position_str);
                 }
             }
@@ -307,9 +308,10 @@ pub fn parse_position(xml_root: &str) -> Result<u32> {
     }
 
     let position = position.ok_or_else(|| anyhow!("Invalid response from device"))?;
-    let hours = position[0..2].parse::<u32>()?;
-    let minutes = position[2..4].parse::<u32>()?;
-    let seconds = position[4..6].parse::<u32>()?;
+    position_iter = position.split(":");
+    let hours = position_iter.next().unwrap_or("0").parse::<u32>()?;
+    let minutes = position_iter.next().unwrap_or("0").parse::<u32>()?;
+    let seconds = position_iter.next().unwrap_or("0").parse::<u32>()?;
     Ok(hours * 3600 + minutes * 60 + seconds)
 }
 
